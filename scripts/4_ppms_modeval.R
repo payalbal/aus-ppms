@@ -6,7 +6,7 @@ gc()
 # system("pkill -f R")
 setwd("./aus-ppms/")
 x <- c('sp', 'raster', 'data.table', 'spatstat.data', 'nlme', 'rpart', 'spatstat', 'ppmlasso', 
-       'parallel', 'doParallel', 'doMC')
+       'parallel', 'doParallel', 'doMC', 'rgdal', 'plyr', 'dismo')
 lapply(x, require, character.only = TRUE)
 source("./scripts/0_functions.R")
 
@@ -330,6 +330,7 @@ fit_ppms_apply <- function(i, spdat, bkdat, interaction_terms, ppm_terms, specie
     
     ## Check if number of observationns for a species is > 20, return NULL
     nk <- nrow(spxyz)
+    
     if (nk < 20) {
       return(NULL)
     } else {
@@ -371,9 +372,8 @@ fit_ppms_apply <- function(i, spdat, bkdat, interaction_terms, ppm_terms, specie
           ppmform <- formula(paste0(" ~ poly(", paste0(interaction_terms, collapse = ", "),
                                     ", degree = 2, raw = FALSE) + factor(landuse) + offset(log(off.bias))",collapse ="")) 
         } else {
-          extra_covar <- ceiling((nk - min.obs)/20)
-          ## upto nk = 360 obs
-          if(extra_covar <= length(ppm_terms)) {
+          extra_covar <- ceiling((nk - min.obs)/20) ## upto nk = 360 obs
+          if(extra_covar <= length(ppm_terms)) { 
             ppmform <- formula(paste0(paste0(" ~ poly(", paste0(interaction_terms, collapse = ", "),
                                              ", degree = 2, raw = FALSE) + factor(landuse)"), 
                                       paste0(" + poly(", ppm_terms[1:extra_covar],
@@ -381,7 +381,7 @@ fit_ppms_apply <- function(i, spdat, bkdat, interaction_terms, ppm_terms, specie
                                              collapse = ""), " + offset(log(off.bias))" ,
                                       collapse =""))
           } else {
-            if(extra_covar > length(ppm_terms)) { ## Fit all covariates
+            if(extra_covar > length(ppm_terms)) { ## Fit all covariates + pa
               extra_covar <- length(ppm_terms)
               ppmform <- formula(paste0(paste0(" ~ poly(", paste0(interaction_terms, collapse = ", "),
                                                ", degree = 2, raw = FALSE) + factor(landuse)"), 
@@ -402,25 +402,123 @@ fit_ppms_apply <- function(i, spdat, bkdat, interaction_terms, ppm_terms, specie
       cat(paste("   # extracted records for",i , " = ", dim(spxyz)[1], "\n"), 
           file = logfile, append = T)
       
-      mod <- try(ppmlasso(formula = ppmform, data = ppmxyz, n.fits = n.fits, 
-                          criterion = "bic", standardise = FALSE), silent=TRUE)
-      if(is.null(mod)){
-        cat(paste("\nModel ",i , " for '", spp[i], "' is NULL. \n"), 
-            file = logfile, append = T)
+      if(!modeval){ ## if model_eval == FALSE
+        ## Fit model
+        mod <- try(ppmlasso(formula = ppmform, data = ppmxyz, n.fits = n.fits, 
+                            criterion = "bic", standardise = FALSE), silent=TRUE)
+        if(is.null(mod)){
+          cat(paste("\nModel ",i , " for '", spp[i], "' is NULL. \n"), 
+              file = logfile, append = T)
+        }
+        
+        # ## Print warnings to screen (for sequence runs only)
+        # cat('Warnings for ', species_names[i],':\n')
+        # warnings()
+        
+        # ## Capture messages and errors in file (for sequence runs only)
+        # sink(logfile, type = "message", append = TRUE, split = FALSE)
+        # try(warnings())
+        # ## reset message sink and close the file connection
+        # sink(type="message")
+        # close(logfile)
+        return(mod)
+        
+      } else { ## if model_eval == TRUE
+        
+        ## Run a basic k-fold for a ppmlasso
+        ## ... Brendan might want to check this
+        nk <- k <- 5 # number of folds
+        kfold_train <- list()
+        kfold_test <- list()
+        rm(folds)
+        
+        ## Sample without replacement 
+        createFolds <- function(x,k){
+          n <- nrow(x)
+          x$folds <- rep(1:k,length.out = n)[sample(n,n)]
+          x
+        }
+        
+        folds <- plyr::ddply(ppmxyz,.(Pres),createFolds,k = nk)
+        for(ii in 1:nk){
+          kfold_test[[ii]]<-folds[folds$folds==ii,] ## dim(folds)[1]/k rows in kfolds_test[[ii]]
+          kfold_train[[ii]]<-folds[folds$folds!=ii,] ## all rows not in kfolds_test[[ii]]
+          # print(colSums(folds[folds$folds==ii,],na.rm = T))
+        }
+        
+        ppmCV <- list()
+        ppmCV_dats <- list()
+        
+        ## Fit model
+        ## fit k models with a random (without replacement) basic K-fold
+        for (ii in seq_len(k)){
+          ppmCV_dats[[ii]] <- kfold_train[[ii]]
+          ppmCV[[ii]] <- try(ppmlasso::ppmlasso(formula = ppmform, data = ppmCV_dats[[ii]], n.fits = n.fits, 
+                                                criterion = "bic", standardise = FALSE), silent=TRUE)
+          
+          if(is.null(ppmCV[[ii]])){
+            cat(paste('\n Model',ii," for species ", i , ": ", spp[i], " is NULL. \n"), 
+                file = logfile, append = T)
+            # >>>>> next <<<<<< - David W?
+          } else {
+            cat(paste('\n Model',ii," for species ", i , ": ", spp[i], " done @ ", Sys.time(), "\n"),
+                file = logfile, append = T)
+          }
+        }
+        
+        ## Model evaluation with training data
+        cell_area <- prod(res(reg_mask))
+        train.preds <- lapply(1:k,function(x)predict(ppmCV[[x]],
+                                                     newdata=ppmCV_dats[[x]])*cell_area)
+        model.evaluations <- lapply(1:k,function(x)dismo::evaluate(train.preds[[x]][ppmCV_dats[[x]]$Pres==1],
+                                                                   train.preds[[x]][ppmCV_dats[[x]]$Pres==0]))
+        
+        # mean AUC from k-folds the model
+        train.meanAUC <- mean(sapply(model.evaluations,function(x)x@auc))
+        
+        # ## ROC curves
+        # par(mfrow=c(3,2))
+        # sapply(1:k,function(ii)plot(model.evaluations[[ii]],"ROC"))
+        # 
+        # ## TPR plots
+        # par(mfrow=c(3,2))
+        # sapply(1:k,function(ii)plot(model.evaluations[[ii]],"TPR"))
+        # 
+        # ## Density plots
+        # par(mfrow=c(3,2))
+        # sapply(1:k,function(ii)density(model.evaluations[[ii]]))
+        # 
+        
+        ## Model evaluations with test data
+        test.preds <- lapply(1:k,function(x)predict(ppmCV[[x]],
+                                                    newdata=kfold_test[[x]])*cell_area)
+        test.evaluations <- lapply(1:k,function(x)dismo::evaluate(test.preds[[x]][kfold_test[[x]]$Pres==1],
+                                                                  test.preds[[x]][kfold_test[[x]]$Pres==0]))
+        
+        
+        ## Mean AUC from k-folds the model
+        test.meanAUC <- mean(sapply(test.evaluations,function(x)x@auc))
+        
+        # ## ROC curves
+        # par(mfrow=c(3,2))
+        # sapply(1:k,function(ii)plot(test.evaluations[[ii]],"ROC"))
+        # 
+        # ## TPR plots
+        # par(mfrow=c(3,2))
+        # sapply(1:k,function(ii)plot(test.evaluations[[ii]],"TPR"))
+        # 
+        # ## Density plots
+        # par(mfrow=c(3,2))
+        # sapply(1:k,function(ii)density(model.evaluations[[ii]]))
+        
+        return(list(ppmCV = ppmCV, 
+                    train_eval = model.evaluations, 
+                    train_AUC = train.meanAUC, 
+                    test_eval = test.evaluations,
+                    test_AUC = test.meanAUC,))
       }
-      # cat('Warnings for ', species_names[i],':\n')
-      # warnings()
-      
-      # ## capture messages and errors to a file
-      # sink(logfile, type = "message", append = TRUE, split = FALSE)
-      # try(warnings())
-      # ## reset message sink and close the file connection
-      # sink(type="message")
-      # close(logfile)
-      
       gc()
-      return(mod)
-    } 
+    }
   }
 }
 
@@ -432,6 +530,8 @@ spp <- unique(spdat$species)[1:100]
 mc.cores <- 80
 seq_along(spp)
 now <- Sys.time()
+ppm_models <- list()
+
 ppm_models <- parallel::mclapply(1:length(spp), fit_ppms_apply, spdat, 
                                  bkdat, interaction_terms, ppm_terms, 
                                  species_names = spp, 
@@ -453,6 +553,9 @@ ppm_mod_time <- Sys.time()-now
 saveRDS(ppm_models, file= file.path(output_path, "ppm_models.rds"))
 ppm_models <- readRDS(file.path(output_path, "ppm_models.rds"))
 
+
+
+>>>> fix from here on..
 ## Check for NULL models
 length(ppm_models[!sapply(ppm_models,is.null)])
 length(ppm_models[sapply(ppm_models,is.null)])
