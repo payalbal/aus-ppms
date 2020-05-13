@@ -156,7 +156,8 @@ covs_pred <- readRDS(file.path(rdata_path, "covs_pred_aus.rds"))
 ## Log run time
 data_runtime <- Sys.time()-data_start
 cat(paste0("\nData prep stop = ", Sys.time(), "\n"), file = masterlog, append = TRUE)
-cat(paste0("\nData prep runtime = ", data_runtime, "\n"), file = masterlog, append = TRUE)
+cat(paste0(">> Data prep runtime = ", data_runtime, 
+           attr(data_runtime, "units"), "\n"), file = masterlog, append = TRUE)
 
 
 ## II. Define model parameters ####
@@ -608,8 +609,8 @@ fit_ppms_apply <- function(i, spdat, bkdat, interaction_terms, ppm_terms, specie
 ## Log run time
 model_prep_runtime <- Sys.time()-model_prep_start
 cat(paste0("\nModel prep stop = ", Sys.time(), "\n"), file = masterlog, append = TRUE)
-cat(paste0("\nModel prep runtime = ", model_prep_runtime, "\n"), file = masterlog, append = TRUE)
-
+cat(paste0(">> Model prep runtime = ", model_prep_runtime, 
+           attr(model_prep_runtime, "units"), "\n"), file = masterlog, append = TRUE)
 
 ## III. Fit models ####
 ppm_start <- Sys.time()
@@ -617,7 +618,7 @@ cat(paste0("\n\nModel runs start = ", ppm_start, "\n"), file = masterlog, append
 
 spdat <- as.data.frame(occdat)
 bkdat <- backxyz200k
-spp <- unique(spdat$species)[1:2]
+spp <- unique(spdat$species)
 mc.cores <- 100
 seq_along(spp)
 ppm_models <- list()
@@ -632,7 +633,8 @@ ppm_models <- parallel::mclapply(1:length(spp), fit_ppms_apply, spdat,
 ppm_runtime <- Sys.time()-ppm_start
 cat(paste0("\n\nfit_ppms_apply() run time for ", length(spp), " species: ", ppm_runtime))
 cat(paste0("\nModel runs stop = ", Sys.time(), "\n"), file = masterlog, append = TRUE)
-cat(paste0("\nModel runtime = ", ppm_runtime, attr(s, "units"), "\n"), file = masterlog, append = TRUE)
+cat(paste0(">> Model runtime = ", ppm_runtime, 
+           attr(ppm_runtime, "units"), "\n"), file = masterlog, append = TRUE)
 
 # ppm_models <- lapply(1:length(spp), fit_ppms_apply, spdat,
 #                      bkdat, interaction_terms, ppm_terms,
@@ -650,10 +652,10 @@ cat(paste0("\nModel runtime = ", ppm_runtime, attr(s, "units"), "\n"), file = ma
 
 
 ## Check for NULL models
-length(ppm_models[!sapply(ppm_models,is.null)])
-length(ppm_models[sapply(ppm_models,is.null)])
+length(ppm_models[!sapply(ppm_models,is.na)])
+length(ppm_models[sapply(ppm_models,is.na)])
 
-which(sapply(ppm_models,is.null))
+which(sapply(ppm_models,is.na))
 
 
 ## IV. Catch errors in models & save outputs ####
