@@ -292,7 +292,7 @@ fit_ppms_apply <- function(i, spdat, bkdat, interaction_terms, ppm_terms, specie
   
   ## Initialise log file
   cat("Fitting a ppm to", species_names[i],"\nThis is the", i,"^th model of",length(species_names),"\n")
-  logfile <- paste0("./output/ppm_log_",gsub(" ","_",species_names[i]),"_",gsub("-", "", Sys.Date()), ".txt")
+  logfile <- paste0(output_path, "/ppm_log_",gsub(" ","_",species_names[i]),"_",gsub("-", "", Sys.Date()), ".txt")
   writeLines(c(""), logfile)
   cat(paste("Fitting a ppm to", species_names[i],"\nThis is the", i,"^th model of",length(species_names),"\n"),
       file = logfile, append = T)
@@ -431,10 +431,10 @@ fit_ppms_apply <- function(i, spdat, bkdat, interaction_terms, ppm_terms, specie
     cat(paste("   # extracted # records = ", dim(spxyz)[1], "\n\n"), 
         file = logfile, append = T)
     
-    ppm_mod_start <- Sys.time()
-    
     if(!modeval){ ## if model_eval == FALSE
       ## Fit model
+      ppm_mod_start <- Sys.time()
+      
       mod <- tryCatch(ppmlasso(formula = ppmform, data = ppmxyz, n.fits = n.fits, 
                                criterion = "bic", standardise = FALSE),
                       error = function(e){ 
@@ -463,7 +463,8 @@ fit_ppms_apply <- function(i, spdat, bkdat, interaction_terms, ppm_terms, specie
       
       ## Log run time for model run
       ppm_mod_end <- Sys.time() - ppm_mod_start
-      cat(paste(">> Run time for ppm model fitting: ", ppm_mod_end, "\n"), 
+      cat(paste(">> Run time for ppm model fitting: ", ppm_mod_end, 
+                attr(ppm_mod_end, "units"), "\n"), 
           file = logfile, append = T)
       
     } else { ## if model_eval == TRUE
@@ -652,10 +653,10 @@ cat(paste0(">> Model runtime = ", ppm_runtime,
 
 
 ## Check for NULL models
-length(ppm_models[!sapply(ppm_models,is.na)])
-length(ppm_models[sapply(ppm_models,is.na)])
+length(ppm_models[!sapply(ppm_models,is.null)])
+length(ppm_models[sapply(ppm_models,is.null)])
 
-which(sapply(ppm_models,is.na))
+which(sapply(ppm_models,is.null))
 
 
 ## IV. Catch errors in models & save outputs ####
@@ -663,7 +664,7 @@ error_list <- list()
 model_list <- list()
 n <- 1
 m <- 1
-errorfile <- paste0("./output/errorfile_", gsub("-", "", Sys.Date()), ".txt")
+errorfile <- paste0(output_path, "/errorfile_", gsub("-", "", Sys.Date()), ".txt")
 
 for(i in 1:length(ppm_models)){
   if(!class(ppm_models[[i]])[1] == "try-error") {
@@ -678,8 +679,8 @@ for(i in 1:length(ppm_models)){
   }
 }
 
-saveRDS(model_list, file = paste0("./output/modlist_",  gsub("-", "", Sys.Date()), ".rds"))
-saveRDS(error_list, file = paste0("./output/errlist_",  gsub("-", "", Sys.Date()), ".rds"))
+saveRDS(model_list, file = paste0(output_path, "/modlist_",  gsub("-", "", Sys.Date()), ".rds"))
+saveRDS(error_list, file = paste0(output_path, "/errlist_",  gsub("-", "", Sys.Date()), ".rds"))
 
 
 
@@ -732,14 +733,14 @@ now <- Sys.time()
 prediction_list <- parallel::mclapply(seq_along(model_list), predict_ppms_apply,
                                       model_list, newdata, bkdat, RCPs, mc.cores = mc.cores)
 pred_time <- Sys.time()-now
-saveRDS(prediction_list, file = paste0("./output/predlist_",  gsub("-", "", Sys.Date()), ".rds"))
+saveRDS(prediction_list, file = paste0(output_path, "/predlist_",  gsub("-", "", Sys.Date()), ".rds"))
 
 
 
 ## Locate errors and rerun analysis for species with errors ###
 ##  To be automated if error problem is not solved by species grouping
 ##  At the moment, it appears that error might be when species data is spatially restricted.
-error_species <- read.table("./output/errorfile_1_20190725.txt", header = FALSE, sep = ",")
+error_species <- read.table(output_path, "/errorfile_1_20190725.txt", header = FALSE, sep = ",")
 colnames(error_species) <- c("index", "species")
 error_index <- error_species$index
 
@@ -764,7 +765,7 @@ error_pred <- parallel::mclapply(seq_along(error_models), predict_ppms_apply,
                                  error_models, newdata, bkdat, RCPs, mc.cores = mc.cores)
 names(error_pred) <- tolower(gsub(" ","_", levels(factor(spdat$species))[error_index]))
 
-errorfile <- paste0("./output/errorfile_2_", gsub("-", "", Sys.Date()), ".txt")
+errorfile <- paste0(output_path, "/errorfile_2_", gsub("-", "", Sys.Date()), ".txt")
 n <- length(model_list)+1
 m <- length(errlist)+1
 error_list <- list()
