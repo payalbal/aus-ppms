@@ -155,8 +155,8 @@ covs_pred <- readRDS(file.path(rdata_path, "covs_pred_aus.rds"))
 
 ## Log run time
 data_runtime <- Sys.time()-data_start
-cat(paste0("\nData prep stop = ", Sys.time(), "\n"), file = masterlog, append = TRUE)
-cat(paste0(">> Data prep runtime = ", data_runtime, 
+cat(paste0("Data prep stop = ", Sys.time(), "\n"), file = masterlog, append = TRUE)
+cat(paste0(">> Data prep runtime = ", data_runtime, " ", 
            attr(data_runtime, "units"), "\n"), file = masterlog, append = TRUE)
 
 
@@ -288,7 +288,11 @@ ppmlasso_weights <- function (sp.xy, quad.xy, coord = c("X", "Y")){
 
 
 ## Define model function ####
-fit_ppms_apply <- function(i, spdat, bkdat, interaction_terms, ppm_terms, species_names, mask_path, n.fits=50, min.obs = 60, modeval = TRUE) {
+fit_ppms_apply <- function(i, spdat, bkdat, interaction_terms, 
+                           ppm_terms, species_names, mask_path, 
+                           n.fits=50, min.obs = 60, 
+                           modeval = TRUE, 
+                           output_list = FALSE) {
   
   ## Initialise log file
   cat("Fitting a ppm to", species_names[i],"\nThis is the", i,"^th model of",length(species_names),"\n")
@@ -459,13 +463,18 @@ fit_ppms_apply <- function(i, spdat, bkdat, interaction_terms, ppm_terms, specie
       # ## reset message sink and close the file connection
       # sink(type="message")
       # close(logfile)
-      return(mod)
       
       ## Log run time for model run
       ppm_mod_end <- Sys.time() - ppm_mod_start
       cat(paste(">> Run time for ppm model fitting: ", ppm_mod_end, 
                 attr(ppm_mod_end, "units"), "\n"), 
           file = logfile, append = T)
+      
+      if (output_list == TRUE) {
+        return(mod)
+      } else {
+        saveRDS(mod, paste0(output_path, "/ppm_out_",gsub(" ","_",species_names[i]),"_",gsub("-", "", Sys.Date()), ".rds"))
+      }
       
     } else { ## if model_eval == TRUE
       
@@ -602,15 +611,20 @@ fit_ppms_apply <- function(i, spdat, bkdat, interaction_terms, ppm_terms, specie
                   test_eval = test.evaluations,
                   test_AUC = test.meanAUC)
       gc()
-      return(mod)
+      
+      if (output_list == TRUE) {
+        return(mod)
+      } else {
+        saveRDS(mod, paste0(output_path, "/ppm_out_",gsub(" ","_",species_names[i]),"_",gsub("-", "", Sys.Date()), ".rds"))
+      }
     }
   }
 }
 
 ## Log run time
 model_prep_runtime <- Sys.time()-model_prep_start
-cat(paste0("\nModel prep stop = ", Sys.time(), "\n"), file = masterlog, append = TRUE)
-cat(paste0(">> Model prep runtime = ", model_prep_runtime, 
+cat(paste0("Model prep stop = ", Sys.time(), "\n"), file = masterlog, append = TRUE)
+cat(paste0(">> Model prep runtime = ", model_prep_runtime, " ",
            attr(model_prep_runtime, "units"), "\n"), file = masterlog, append = TRUE)
 
 ## III. Fit models ####
@@ -629,12 +643,12 @@ ppm_models <- parallel::mclapply(1:length(spp), fit_ppms_apply, spdat,
                                  species_names = spp, 
                                  mask_path = file.path(rdata_path, "aligned_mask_aus.rds"),
                                  n.fits=100, min.obs = 60, mc.cores = mc.cores,
-                                 modeval = TRUE)
+                                 modeval = TRUE, output_list = FALSE)
 
 ppm_runtime <- Sys.time()-ppm_start
 cat(paste0("\n\nfit_ppms_apply() run time for ", length(spp), " species: ", ppm_runtime))
-cat(paste0("\nModel runs stop = ", Sys.time(), "\n"), file = masterlog, append = TRUE)
-cat(paste0(">> Model runtime = ", ppm_runtime, 
+cat(paste0("Model runs stop = ", Sys.time(), "\n"), file = masterlog, append = TRUE)
+cat(paste0(">> Model runtime = ", ppm_runtime, " ",
            attr(ppm_runtime, "units"), "\n"), file = masterlog, append = TRUE)
 
 # ppm_models <- lapply(1:length(spp), fit_ppms_apply, spdat,
