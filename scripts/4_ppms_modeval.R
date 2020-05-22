@@ -6,23 +6,29 @@ gc()
 setwd("./aus-ppms/")
 
 x <- c('sp', 'raster', 'data.table', 'spatstat.data', 'nlme', 'rpart', 'spatstat', 'ppmlasso', 
-       'parallel', 'doParallel', 'doMC', 'rgdal', 'plyr', 'dismo')
+       'parallel', 'doParallel', 'doMC', 'rgdal', 'plyr', 'dismo', 'future.apply')
 lapply(x, require, character.only = TRUE)
 source("./scripts/0_functions.R")
 
 ## *** NOTE: all files within to be recreated after BB's landuse maps (currently using regSSP_birds files)
 ppm_path <- "./data" # "/Volumes/discovery_data/aus-ppms_data"
-rdata_path <- file.path(ppm_path, "RData") 
-output_path <- "./output"
+rdata_path <- file.path(ppm_path, "RData")
+dir.create("./output")
+output_path <- paste0("./output/output_", gsub(" ", "_", format(Sys.time(), "%F %H-%M")))
 dir.create(output_path)
 
 
 ## Master log file ####
 job_start <- Sys.time()
-masterlog <- paste0("./ppm_run.txt")
+masterlog <- paste0(output_path, "/ppm_run.txt")
 writeLines(c(""), masterlog)
 cat(paste0(">> Job start = ", job_start, "\n"), file = masterlog, append = TRUE)
 cat(paste0("---------------------------------------------"), file = masterlog, append = TRUE)
+
+
+## Global parameters
+bkpts <- 100000 # number of background points
+n.fits <- 10
 
 
 ## I. Data preperation ####
@@ -172,7 +178,7 @@ rpts <- rasterToPoints(reg_mask0, spatial=TRUE)
 backxyz <- data.frame(rpts@data, X=coordinates(rpts)[,1], Y=coordinates(rpts)[,2])     
 backxyz <- backxyz[,-1]
 backxyz <- na.omit(cbind(backxyz, as.matrix(covs_mod)))
-backxyz200k <- backxyz[sample(nrow(backxyz), 200000), ]
+backxyz200k <- backxyz[sample(nrow(backxyz), bkpts), ]
 
 # ## Checks
 # summary(covs_mod)
@@ -197,9 +203,9 @@ ppm_terms <- names(backxyz200k)[!grepl("off.bias", names(backxyz200k))]
 ppm_terms <- ppm_terms[!(ppm_terms %in% interaction_terms)]
 ppm_terms <- ppm_terms[!(ppm_terms %in% factor_terms)]
 
-## Fix n.fits = 20 and max.lambda = 100
-lambdaseq <- round(sort(exp(seq(-10, log(100 + 1e-05), length.out = 20)), 
-                        decreasing = TRUE),5)
+# ## Fix n.fits = 20 and max.lambda = 100
+# lambdaseq <- round(sort(exp(seq(-10, log(100 + 1e-05), length.out = n.fits)), 
+#                         decreasing = TRUE),5)
 
 ## Estimate weights - by Skipton Wooley
 ## See ppmlasso::ppmdat 
@@ -287,6 +293,15 @@ ppmlasso_weights <- function (sp.xy, quad.xy, coord = c("X", "Y")){
 # saveRDS(area_rast_mask,filename = file.path(output_path, "area_offset_0360.rds"))
 
 
+## Initialise log file for ppm computation times comparison ####
+timelog <- paste0(output_path, "/ppm_timelog_",Sys.Date(), ".txt")
+writeLines(c(""), timelog)
+cat(paste(c("i", "species_name", "pr_pts", "back_pts",	"ppmfit_0folds_min",	
+            "ppmfit_1fold_avg_min",	"ppmfit_5folds_min",	"ppmeval_train_sec",	
+            "ppmeval_test_sec", "distribution", "\n"), collapse = ","), 
+    file = timelog, append = T)
+
+
 ## Define model function ####
 fit_ppms_apply <- function(i, spdat, bkdat, interaction_terms, 
                            ppm_terms, species_names, mask_path, 
@@ -294,14 +309,14 @@ fit_ppms_apply <- function(i, spdat, bkdat, interaction_terms,
                            modeval = TRUE, 
                            output_list = FALSE) {
   
-  ## Initialise log file
+  ## Initialise log file for species
   cat("Fitting a ppm to", species_names[i],"\nThis is the", i,"^th model of",length(species_names),"\n")
-  logfile <- paste0(output_path, "/ppm_log_",gsub(" ","_",species_names[i]),"_",gsub("-", "", Sys.Date()), ".txt")
-  writeLines(c(""), logfile)
+  specieslog <- paste0(output_path, "/ppm_log_",gsub(" ","_",species_names[i]),"_",gsub("-", "", Sys.Date()), ".txt")
+  writeLines(c(""), specieslog)
   cat(paste("Fitting a ppm to", species_names[i],"\nThis is the", i,"^th model of",length(species_names),"\n"),
-      file = logfile, append = T)
+      file = specieslog, append = T)
   cat(paste("-------------------------------------------\n"),
-      file = logfile, append = T)
+      file = specieslog, append = T)
   ppm_dat_start <- Sys.time()
   
   ## Define species specific data & remove NA (if any)
@@ -373,7 +388,7 @@ fit_ppms_apply <- function(i, spdat, bkdat, interaction_terms,
     ## Log run time for data preparationn
     ppm_dat_end <- Sys.time() - ppm_dat_start
     cat(paste("\nRun time for data preparation: ", ppm_dat_end, attr(ppm_dat_end, "units"), "\n"), 
-        file = logfile, append = T)
+        file = specieslog, append = T)
     
     ## Specify PPM formula based on number of observatios
     ## If number of observations < 20, do not fit a model.
@@ -429,11 +444,13 @@ fit_ppms_apply <- function(i, spdat, bkdat, interaction_terms,
     
     ## Fit ppm & save output
     cat(paste("\nFitting ppm model for species ",i , ": ", spp[i], " @ ", Sys.time(), "\n"), 
-        file = logfile, append = T)
-    cat(paste("   # original # records = ", dim(spxy)[1], "\n"), 
-        file = logfile, append = T)
-    cat(paste("   # extracted # records = ", dim(spxyz)[1], "\n\n"), 
-        file = logfile, append = T)
+        file = specieslog, append = T)
+    cat(paste("   # presence points for species (original) = ", 
+              dim(spxy)[1], "\n"), file = specieslog, append = T)
+    cat(paste("   # presence points for species (extracted) = ", 
+              dim(spxyz)[1], "\n\n"), file = specieslog, append = T)
+    cat(paste("   # total data points for species (presence + background) = ", 
+              dim(ppmxyz)[1], "\n\n"), file = specieslog, append = T)
     
     if(!modeval){ ## if model_eval == FALSE
       ## Fit model
@@ -443,14 +460,14 @@ fit_ppms_apply <- function(i, spdat, bkdat, interaction_terms,
                                criterion = "bic", standardise = FALSE),
                       error = function(e){ 
                         cat(paste("\nModel ",i," for species ", spp[i], " has errors. \n"),
-                            file = logfile, 
+                            file = specieslog, 
                             append = T)
                         return(NA) 
                       })
       
       if(is.na(mod)){
         cat(paste("\nERROR: Output for model ",i , " for species ", spp[i], " is NA. \n"), 
-            file = logfile, append = T)
+            file = specieslog, append = T)
       }
       
       # ## Print warnings to screen (for sequence runs only)
@@ -458,17 +475,22 @@ fit_ppms_apply <- function(i, spdat, bkdat, interaction_terms,
       # warnings()
       
       # ## Capture messages and errors in file (for sequence runs only)
-      # sink(logfile, type = "message", append = TRUE, split = FALSE)
+      # sink(specieslog, type = "message", append = TRUE, split = FALSE)
       # try(warnings())
       # ## reset message sink and close the file connection
       # sink(type="message")
-      # close(logfile)
+      # close(specieslog)
       
       ## Log run time for model run
       ppm_mod_end <- Sys.time() - ppm_mod_start
       cat(paste(">> Run time for ppm model fitting: ", ppm_mod_end, 
                 attr(ppm_mod_end, "units"), "\n"), 
-          file = logfile, append = T)
+          file = specieslog, append = T)
+      
+      ## Log time for comparison
+      time_vec <- c(dim(spxy)[1], dim(bkdat)[1], ppm_mod_end, rep(NA, 5))
+      cat(paste(c(i, trimws(gsub(" ", "_", spp[i])), time_vec, "\n"), collapse = ","),
+          file = timelog, append = T)
       
       if (output_list == TRUE) {
         return(mod)
@@ -503,6 +525,7 @@ fit_ppms_apply <- function(i, spdat, bkdat, interaction_terms,
       
       ppmCV <- list()
       ppmCV_dats <- list()
+      ppmCV_end_kmodels <- c() ## to log time per run
       
       ## Fit model
       ## fit k models with a random (without replacement) basic K-fold
@@ -515,19 +538,22 @@ fit_ppms_apply <- function(i, spdat, bkdat, interaction_terms,
                                          standardise = FALSE),
                                 error = function(e){ 
                                   cat(paste("\n Model",ii,"/",k," for species ", i , ": ", spp[i], " has errors. \n"),
-                                      file = logfile, 
+                                      file = specieslog, 
                                       append = T)
                                   return(NA) 
                                 })
         
+        ppmCV_end <- Sys.time()
+        
         if(is.na(ppmCV[[ii]])){
           cat(paste("\nERROR: Output for model ",ii,"/",k," for species ", i , ": ", spp[i], " is NA. \n"), 
-              file = logfile, append = T)
+              file = specieslog, append = T)
           stop("\nERROR: Output for model ",ii,"/",k," for species ", i , ": ", spp[i], " is NA \n")
         } else {
-          cat(paste("\nModel",ii,"/",k, " done @ ", Sys.time(), "\n"),
-              file = logfile, append = T)
+          cat(paste("\nModel",ii,"/",k, " done @ ", ppmCV_end, "\n"),
+              file = specieslog, append = T)
         }
+        ppmCV_end_kmodels[[i]] <- ppmCV_end
       }
       
       ## Log run time for k models run
@@ -535,13 +561,13 @@ fit_ppms_apply <- function(i, spdat, bkdat, interaction_terms,
       cat(paste(">> Run time for all", k," models for species ",
                 i , ": ", ppm_mod_end, 
                 attr(ppm_mod_end, "units"), "\n"), 
-          file = logfile, append = T)
+          file = specieslog, append = T)
       
       ## Model evaluation with training data
       ppm_traineval_start <- Sys.time()
       
       cat(paste("\n\nModel evaluation with training data: ", Sys.time(), "\n"), 
-          file = logfile, append = T)
+          file = specieslog, append = T)
       
       cell_area <- prod(res(reg_mask))
       train.preds <- lapply(1:k,function(x)predict(ppmCV[[x]],
@@ -568,14 +594,14 @@ fit_ppms_apply <- function(i, spdat, bkdat, interaction_terms,
       ppm_traineval_end <- Sys.time() - ppm_traineval_start
       cat(paste(">> Run time for model evaluation with training data: ", 
                 ppm_traineval_end, attr(ppm_traineval_end, "units"), "\n"), 
-          file = logfile, append = T)
+          file = specieslog, append = T)
       
       
       ## Model evaluations with test data
       ppm_testeval_start <- Sys.time()
       
       cat(paste("\n\nModel evaluation with test data: ", Sys.time(), "\n"), 
-          file = logfile, append = T)
+          file = specieslog, append = T)
       
       test.preds <- lapply(1:k,function(x)predict(ppmCV[[x]],
                                                   newdata=kfold_test[[x]])*cell_area)
@@ -602,7 +628,7 @@ fit_ppms_apply <- function(i, spdat, bkdat, interaction_terms,
       ppm_testeval_end <- Sys.time() - ppm_testeval_start
       cat(paste(">> Run time for model evaluation with test data: ", 
                 ppm_testeval_end, attr(ppm_testeval_end, "units"), "\n"), 
-          file = logfile, append = T)
+          file = specieslog, append = T)
       
       ## Save output
       mod <- list(ppmCV = ppmCV, 
@@ -610,6 +636,13 @@ fit_ppms_apply <- function(i, spdat, bkdat, interaction_terms,
                   train_AUC = train.meanAUC, 
                   test_eval = test.evaluations,
                   test_AUC = test.meanAUC)
+      
+      ## Log time for comparison
+      time_vec <- c(dim(spxy)[1], dim(bkdat)[1], NA, mean(ppmCV_end_kmodels), 
+                    ppm_mod_end, ppm_traineval_end, ppm_testeval_end, NA)
+      cat(paste(c(i, trimws(gsub(" ", "_", spp[i])), time_vec, "\n"), collapse = ","),
+          file = timelog, append = T)
+      
       gc()
       
       if (output_list == TRUE) {
@@ -627,29 +660,65 @@ cat(paste0("Model prep stop = ", Sys.time(), "\n"), file = masterlog, append = T
 cat(paste0(">> Model prep runtime = ", model_prep_runtime, " ",
            attr(model_prep_runtime, "units"), "\n"), file = masterlog, append = TRUE)
 
-## III. Fit models ####
+## III. Fit models & log info ####
 ppm_start <- Sys.time()
 cat(paste0("\n\nModel runs start = ", ppm_start, "\n"), file = masterlog, append = TRUE)
 
 spdat <- as.data.frame(occdat)
 bkdat <- backxyz200k
-spp <- unique(spdat$species)
-mc.cores <- 100
+modeval <- TRUE
+spp <- unique(spdat$species)[1:10]
+mc.cores <- 10
 seq_along(spp)
 ppm_models <- list()
 
-ppm_models <- parallel::mclapply(1:length(spp), fit_ppms_apply, spdat, 
-                                 bkdat, interaction_terms, ppm_terms, 
-                                 species_names = spp, 
-                                 mask_path = file.path(rdata_path, "aligned_mask_aus.rds"),
-                                 n.fits=100, min.obs = 60, mc.cores = mc.cores,
-                                 modeval = TRUE, output_list = FALSE)
+plan(multiprocess, workers = 10)
+ppm_models <- future_lapply(1:length(spp), fit_ppms_apply, spdat, 
+                            bkdat, interaction_terms, ppm_terms, 
+                            species_names = spp, 
+                            mask_path = file.path(rdata_path, "aligned_mask_aus.rds"),
+                            n.fits = n.fits, min.obs = 60, mc.cores = mc.cores,
+                            modeval = modeval, output_list = FALSE)
+
+# ppm_models <- parallel::mclapply(1:length(spp), fit_ppms_apply, spdat, 
+#                                  bkdat, interaction_terms, ppm_terms, 
+#                                  species_names = spp, 
+#                                  mask_path = file.path(rdata_path, "aligned_mask_aus.rds"),
+#                                  n.fits = n.fits, min.obs = 60, mc.cores = mc.cores,
+#                                  modeval = modeval, output_list = FALSE)
 
 ppm_runtime <- Sys.time()-ppm_start
-cat(paste0("\n\nfit_ppms_apply() run time for ", length(spp), " species: ", ppm_runtime))
+cat(paste0("\n\nfit_ppms_apply() run time for ", length(spp), " species: ", 
+           ppm_runtime, " ", attr(ppm_runtime, "units"), "\n\n"))
 cat(paste0("Model runs stop = ", Sys.time(), "\n"), file = masterlog, append = TRUE)
 cat(paste0(">> Model runtime = ", ppm_runtime, " ",
            attr(ppm_runtime, "units"), "\n"), file = masterlog, append = TRUE)
+
+cat(paste0("\n\n---------------------------------------------\n"), 
+    file = masterlog, append = TRUE)
+cat(paste0("Run details: \n", 
+           "modeval = ", modeval, "\n",
+           "# species = ", length(spp), "\n",
+           "# background points = ", bkpts, "\n",
+           "# n.fits = ", n.fits, "\n"),
+    file = masterlog, append = TRUE)
+cat(paste0("\n---------------------------------------------\n\n"), 
+    file = masterlog, append = TRUE)
+
+sink(NULL)
+cat("Session details: \n", file = masterlog, append = TRUE)
+cat(paste0("Date:\n"), file = masterlog, append = TRUE)
+sink(file = masterlog, append = TRUE)
+Sys.Date()
+sink(NULL)
+cat("\n\nSession Info:\n", file = masterlog, append = TRUE)
+sink(file = masterlog, append = TRUE)
+sessionInfo()
+sink(NULL)
+
+saveRDS(ppm_models, file= file.path(output_path, "ppm_models.rds"))
+# ppm_models <- readRDS(file.path(output_path, "ppm_models.rds"))
+
 
 # ppm_models <- lapply(1:length(spp), fit_ppms_apply, spdat,
 #                      bkdat, interaction_terms, ppm_terms,
@@ -662,14 +731,22 @@ cat(paste0(">> Model runtime = ", ppm_runtime, " ",
 #                              mask_path = file.path(rdata_path, "aligned_mask_aus.rds"),
 #                              n.fits=5, min.obs = 60, modeval = TRUE)
 
-# saveRDS(ppm_models, file= file.path(output_path, "ppm_models.rds"))
-# ppm_models <- readRDS(file.path(output_path, "ppm_models.rds"))
-
+## Check for species distributions
+reg_mask <- readRDS(file.path(rdata_path, "aligned_mask_aus.rds"))
+par(mfrow = c(2,5))
+for (i in 1:length(spp)){
+  ## Define species specific data & remove NA (if any)
+  spxy <- spdat[spdat$species %in% spp[i], c(1,2)]
+  names(spxy) <- c("X", "Y")
+  
+  ## Check if points fall outside the mask
+  plot(reg_mask, axes = FALSE, legend = FALSE, box = FALSE, main = spp[i])
+  points(spxy)
+}
 
 ## Check for NULL models
 length(ppm_models[!sapply(ppm_models,is.null)])
 length(ppm_models[sapply(ppm_models,is.null)])
-
 which(sapply(ppm_models,is.null))
 
 
@@ -702,7 +779,7 @@ saveRDS(error_list, file = paste0(output_path, "/errlist_",  gsub("-", "", Sys.D
 ## Define prediction function ####
 predict_ppms_apply <- function(i, models_list, newdata, bkdat, RCPs = c(26, 85)){
   
-  cat('Predicting ', i,'^th model\n')
+  cat("Predicting ", i,"^th model\n")
   
   if(class(models_list)== "try-error") { ## redundant because error models are removed
     return(NULL)
@@ -712,21 +789,21 @@ predict_ppms_apply <- function(i, models_list, newdata, bkdat, RCPs = c(26, 85))
     
     ## Current predictions
     preddat <- newdata[which(names(newdata) %in% 
-                               names(newdata)[-grep('26|85', names(newdata))])]
+                               names(newdata)[-grep("26|85", names(newdata))])]
     predmu$current <- predict.ppmlasso(models_list[[i]], newdata = preddat)
     
     ## Future predictions
     for (rcp in RCPs) {
       if (rcp == 26) {
         preddat <- newdata[which(names(newdata) %in% 
-                                   names(newdata)[-grep('85|bio', names(newdata))])]
+                                   names(newdata)[-grep("85|bio", names(newdata))])]
         names(preddat) <- names(bkdat)[1:(length(names(bkdat))-1)]
         predmu$rcp26 <- predict.ppmlasso(models_list[[i]], newdata = preddat)
         # predmu <- 1-exp(-predmu) ## gives reative probabilities
         
       } else {
         preddat <- newdata[which(names(newdata) %in% 
-                                   names(newdata)[-grep('26|bio', names(newdata))])]
+                                   names(newdata)[-grep("26|bio", names(newdata))])]
         names(preddat) <- names(bkdat)[1:(length(names(bkdat))-1)]
         predmu$rcp85 <- predict.ppmlasso(models_list[[i]], newdata = preddat)
         # predmu <- 1-exp(-predmu) ## gives reative probabilities
