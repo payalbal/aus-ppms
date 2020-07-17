@@ -428,7 +428,7 @@ fit_ppms_apply <- function(i, spdat, bkdat, interaction_terms, ppm_terms, specie
 ## Fit models ####
 spdat <- as.data.frame(occdat)
 bkdat <- backxyz200k
-spp <- unique(spdat$species)[1:100]
+spp <- unique(spdat$species)
 mc.cores <- 80
 seq_along(spp)
 now <- Sys.time()
@@ -453,7 +453,7 @@ ppm_mod_time <- Sys.time()-now
 saveRDS(ppm_models, file= file.path(output_path, "ppm_models.rds"))
 ppm_models <- readRDS(file.path(output_path, "ppm_models.rds"))
 
-## Check for NULL models
+## Check for NULL modelas
 length(ppm_models[!sapply(ppm_models,is.null)])
 length(ppm_models[sapply(ppm_models,is.null)])
 

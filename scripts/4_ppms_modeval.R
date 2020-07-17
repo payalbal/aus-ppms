@@ -1,34 +1,36 @@
 ## Set up work environment ####
 rm(list = ls())
 gc()
+Sys.setenv(TZ='Australia/Melbourne')
+
 # system("ps")
 # system("pkill -f R")
-setwd("./aus-ppms/")
 
 x <- c('sp', 'raster', 'data.table', 'spatstat.data', 'nlme', 'rpart', 'spatstat', 'ppmlasso', 
-       'parallel', 'doParallel', 'doMC', 'rgdal', 'plyr', 'dismo', 'future.apply')
+       'parallel', 'doParallel', 'doMC', 'rgdal', 'plyr', 'dismo', 'future.apply', 'future')
 lapply(x, require, character.only = TRUE)
-source("./scripts/0_functions.R")
+source("/tempdata/workdir/aus-ppms/scripts/0_functions.R")
 
 ## *** NOTE: all files within to be recreated after BB's landuse maps (currently using regSSP_birds files)
-ppm_path <- "./data" # "/Volumes/discovery_data/aus-ppms_data"
+ppm_path <- "/tempdata/workdir/aus-ppms/data" # "/Volumes/discovery_data/aus-ppms_data"
 rdata_path <- file.path(ppm_path, "RData")
-dir.create("./output")
-output_path <- paste0("./output/output_", gsub(" ", "_", format(Sys.time(), "%F %H-%M")))
+dir.create("/tempdata/workdir/aus-ppms/output")
+output_path <- paste0("/tempdata/workdir/aus-ppms/output/output_", gsub("-", "", format(Sys.time(), "%F_%H%M")))
+datestamp <- gsub("-", "", format(Sys.time(), "%F")) ## used later to extract results
 dir.create(output_path)
+
+
+## Global parameters ####
+bkpts <- 10000 # number of background points
+n.fits <- 20
 
 
 ## Master log file ####
 job_start <- Sys.time()
-masterlog <- paste0(output_path, "/ppm_run.txt")
+masterlog <- paste0(output_path, "/ppm_run_bkp_",bkpts, "_fits_", n.fits, ".txt")
 writeLines(c(""), masterlog)
 cat(paste0(">> Job start = ", job_start, "\n"), file = masterlog, append = TRUE)
 cat(paste0("---------------------------------------------"), file = masterlog, append = TRUE)
-
-
-## Global parameters
-bkpts <- 100000 # number of background points
-n.fits <- 10
 
 
 ## I. Data preperation ####
@@ -178,13 +180,13 @@ rpts <- rasterToPoints(reg_mask0, spatial=TRUE)
 backxyz <- data.frame(rpts@data, X=coordinates(rpts)[,1], Y=coordinates(rpts)[,2])     
 backxyz <- backxyz[,-1]
 backxyz <- na.omit(cbind(backxyz, as.matrix(covs_mod)))
-backxyz200k <- backxyz[sample(nrow(backxyz), bkpts), ]
+backxyzK <- backxyz[sample(nrow(backxyz), bkpts), ]
 
 # ## Checks
 # summary(covs_mod)
-# summary(backxyz200k)
+# summary(backxyzK)
 # plot(reg_mask0, legend = FALSE)
-# plot(rasterFromXYZ(backxyz200k[,1:3]), col = "black", add = TRUE, legend=FALSE)
+# plot(rasterFromXYZ(backxyzK[,1:3]), col = "black", add = TRUE, legend=FALSE)
 
 ## Prediction points
 predxyz <- data.frame(rpts@data, X=coordinates(rpts)[,1], Y=coordinates(rpts)[,2])     
@@ -199,12 +201,12 @@ factor_terms <- c("landuse", "pa")
 
 ## Define ppm variables to be used in the model 
 ## NOTE: X, Y & landuse are called in the ppm formula directly, hence removed here
-ppm_terms <- names(backxyz200k)[!grepl("off.bias", names(backxyz200k))]
+ppm_terms <- names(backxyzK)[!grepl("off.bias", names(backxyzK))]
 ppm_terms <- ppm_terms[!(ppm_terms %in% interaction_terms)]
 ppm_terms <- ppm_terms[!(ppm_terms %in% factor_terms)]
 
-# ## Fix n.fits = 20 and max.lambda = 100
-# lambdaseq <- round(sort(exp(seq(-10, log(100 + 1e-05), length.out = n.fits)), 
+# ## Fix max.lambda = 100
+# lambdaseq <- round(sort(exp(seq(-10, log(max.lambda + 1e-05), length.out = n.fits)), 
 #                         decreasing = TRUE),5)
 
 ## Estimate weights - by Skipton Wooley
@@ -254,7 +256,7 @@ ppmlasso_weights <- function (sp.xy, quad.xy, coord = c("X", "Y")){
 # ar <- raster::area(reg_mask0)
 # ar <- mask(ar,reg_mask)
 # totarea <- cellStats(ar,'sum')*1000 ## in meters^2
-# area_offset <- extract(ar, backxyz200k[,c('X','Y')], small = TRUE, fun = mean, na.rm = TRUE)*1000 ## in meters
+# area_offset <- extract(ar, backxyzK[,c('X','Y')], small = TRUE, fun = mean, na.rm = TRUE)*1000 ## in meters
 # bkgrd_wts <- c(totarea/area_offset)
 
 # ## Estimate offset for unequal area due to projection [FOR GLOBAL ANALYSIS ONLY]
@@ -649,6 +651,8 @@ fit_ppms_apply <- function(i, spdat, bkdat, interaction_terms,
         return(mod)
       } else {
         saveRDS(mod, paste0(output_path, "/ppm_out_",gsub(" ","_",species_names[i]),"_",gsub("-", "", Sys.Date()), ".rds"))
+        out <- list(likelihood = sapply(mod$ppmCV, `[[`, 8), train_AUC = mod$train_AUC, test_AUC = mod$test_AUC)
+        return(out)
       }
     }
   }
@@ -665,27 +669,42 @@ ppm_start <- Sys.time()
 cat(paste0("\n\nModel runs start = ", ppm_start, "\n"), file = masterlog, append = TRUE)
 
 spdat <- as.data.frame(occdat)
-bkdat <- backxyz200k
+bkdat <- backxyzK
 modeval <- TRUE
 spp <- unique(spdat$species)[1:10]
 mc.cores <- 10
 seq_along(spp)
 ppm_models <- list()
 
-plan(multiprocess, workers = 10)
-ppm_models <- future_lapply(1:length(spp), fit_ppms_apply, spdat, 
-                            bkdat, interaction_terms, ppm_terms, 
-                            species_names = spp, 
+plan(multiprocess, workers = mc.cores)
+options(future.globals.maxSize = +Inf) ## CAUTION: Set this to a value, e.g. availablecores-1?/RAM-10?
+ppm_models <- future_lapply(1:length(spp), fit_ppms_apply, spdat,
+                            bkdat, interaction_terms, ppm_terms,
+                            species_names = spp,
                             mask_path = file.path(rdata_path, "aligned_mask_aus.rds"),
-                            n.fits = n.fits, min.obs = 60, mc.cores = mc.cores,
+                            n.fits = n.fits, min.obs = 60,
                             modeval = modeval, output_list = FALSE)
-
-# ppm_models <- parallel::mclapply(1:length(spp), fit_ppms_apply, spdat, 
-#                                  bkdat, interaction_terms, ppm_terms, 
-#                                  species_names = spp, 
+names(ppm_models) <- tolower(gsub(" ", "_", spp))
+# ppm_models <- parallel::mclapply(1:length(spp), fit_ppms_apply, spdat,
+#                                  bkdat, interaction_terms, ppm_terms,
+#                                  species_names = spp,
 #                                  mask_path = file.path(rdata_path, "aligned_mask_aus.rds"),
 #                                  n.fits = n.fits, min.obs = 60, mc.cores = mc.cores,
 #                                  modeval = modeval, output_list = FALSE)
+
+# ppm_models <- lapply(1:length(spp), fit_ppms_apply, spdat,
+#                      bkdat, interaction_terms, ppm_terms,
+#                      species_names = spp,
+#                      mask_path = file.path(rdata_path, "aligned_mask_aus.rds"),
+#                      n.fits=10, min.obs = 60, modeval = TRUE)
+
+# ppm_models <- fit_ppms_apply(1, spdat, bkdat, interaction_terms,
+#                              ppm_terms, species_names = spp,
+#                              mask_path = file.path(rdata_path, "aligned_mask_aus.rds"),
+#                              n.fits=5, min.obs = 60, modeval = TRUE)
+
+
+saveRDS(ppm_models, paste0(output_path, "/ppm_out_", gsub("-", "", Sys.Date()), ".rds"))
 
 ppm_runtime <- Sys.time()-ppm_start
 cat(paste0("\n\nfit_ppms_apply() run time for ", length(spp), " species: ", 
@@ -705,7 +724,6 @@ cat(paste0("Run details: \n",
 cat(paste0("\n---------------------------------------------\n\n"), 
     file = masterlog, append = TRUE)
 
-sink(NULL)
 cat("Session details: \n", file = masterlog, append = TRUE)
 cat(paste0("Date:\n"), file = masterlog, append = TRUE)
 sink(file = masterlog, append = TRUE)
@@ -716,20 +734,33 @@ sink(file = masterlog, append = TRUE)
 sessionInfo()
 sink(NULL)
 
-saveRDS(ppm_models, file= file.path(output_path, "ppm_models.rds"))
-# ppm_models <- readRDS(file.path(output_path, "ppm_models.rds"))
+
+## Extract mean likelihood
+meanlik <- sapply(ppm_models, `[[`, 1)
+as.data.frame(colMeans(meanlik))
+
+gc()
 
 
-# ppm_models <- lapply(1:length(spp), fit_ppms_apply, spdat,
-#                      bkdat, interaction_terms, ppm_terms,
-#                      species_names = spp,
-#                      mask_path = file.path(rdata_path, "aligned_mask_aus.rds"),
-#                      n.fits=10, min.obs = 60, modeval = TRUE)
+## Load ppm_models from rds files ####
+## Species ppm files
+ppm_files <- list.files(output_path, pattern = "ppm_out", full.names = TRUE)
 
-# ppm_models <- fit_ppms_apply(1, spdat, bkdat, interaction_terms,
-#                              ppm_terms, species_names = spp,
-#                              mask_path = file.path(rdata_path, "aligned_mask_aus.rds"),
-#                              n.fits=5, min.obs = 60, modeval = TRUE)
+## Extract species names from files
+ppm_sp <- regmatches(ppm_files,regexec(paste0("ppm_out_(.*?)_", datestamp), ppm_files))
+ppm_sp <- sapply(ppm_sp, `[[`, 2)
+
+## Create list of results
+ppm_out <- list()
+for(i in 1:length(ppm_files)){
+  ppm_out[[i]] <- readRDS(ppm_files[i])
+}
+names(ppm_out) <- ppm_sp
+
+## Check model fits/predictions
+names(ppm_out[[1]])
+ppm_test_auc <- sapply(ppm_out, `[[`, 5)
+
 
 ## Check for species distributions
 reg_mask <- readRDS(file.path(rdata_path, "aligned_mask_aus.rds"))
@@ -818,7 +849,7 @@ predict_ppms_apply <- function(i, models_list, newdata, bkdat, RCPs = c(26, 85))
 # bioreg <- readRDS(file.path(rdata_path, "bioregions_aus.rds")) 
 
 newdata <- predxyz
-bkdat <- backxyz200k
+bkdat <- backxyzK
 RCPs <- c(26, 85)
 now <- Sys.time()
 prediction_list <- parallel::mclapply(seq_along(model_list), predict_ppms_apply,
@@ -839,7 +870,7 @@ names(model_list) <- tolower(gsub(" ","_", levels(factor(spdat$species))[-error_
 names(prediction_list) <- tolower(gsub(" ","_", levels(factor(spdat$species))[-error_index]))
 
 spdat <- gbif
-bkdat <- backxyz200k
+bkdat <- backxyzK
 bkwts <- bkgrd_wts
 spp <- levels(factor(spdat$species))[error_index]
 seq_along(spp)
@@ -850,7 +881,7 @@ error_models <- parallel::mclapply(1:length(spp), fit_ppms_apply, spdat, #spwts,
 names(error_models) <- tolower(gsub(" ","_", levels(factor(spdat$species))[error_index]))
 
 newdata <- predxyz
-bkdat <- backxyz200k
+bkdat <- backxyzK
 RCPs <- c(26, 85)
 error_pred <- parallel::mclapply(seq_along(error_models), predict_ppms_apply,
                                  error_models, newdata, bkdat, RCPs, mc.cores = mc.cores)
@@ -916,7 +947,7 @@ gc()
 ## see slide 14 & 26 in: http://www.bo.astro.it/~school/school09/Presentations/Bertinoro09_Jasper_Wall_3.pdf
 
 ## let's do a PCA on the data to work out which are the most variable coefs.
-Xoriginal=t(as.matrix(backxyz200k))
+Xoriginal=t(as.matrix(backxyzK))
 
 # Center the data so that the mean of each row is 0
 rowmns <- rowMeans(Xoriginal)
@@ -927,7 +958,7 @@ A <- X %*% t(X)
 E <- eigen(A,TRUE)
 P <- t(E$vectors)
 
-dimnames(P) <- list(colnames(backxyz200k),paste0("PCA",1:ncol(P)))
+dimnames(P) <- list(colnames(backxyzK),paste0("PCA",1:ncol(P)))
 df <- as.data.frame(t(P[,1:5]))
 df$row.names<-rownames(df)
 library(reshape2)

@@ -8,16 +8,17 @@ system("pkill -f R")
 
 setwd("./aus-ppms/")
 data_path <- "./data" #"/Volumes/discovery_data/aus-ppms_data/"
-ala_path <- paste0(data_path, "/ala_data")
+ala_folder <- "AVES"
+ala_path <- file.path(data_path, "ala_data", ala_folder)
 
 ## Get download and cleaning scripts from github repo
 ## Ref: https://github.com/cwarecsiro/gdmEngine/tree/master/gdmEngine
 system(paste0("curl https://raw.githubusercontent.com/cwarecsiro/gdmEngine/master/gdmEngine/R/download_ala.R -o ", "./scripts/download_ala.R"))
 system(paste0("curl https://raw.githubusercontent.com/cwarecsiro/gdmEngine/master/gdmEngine/R/download_taxalist.R -o ", "./scripts/download_ala_bytaxa.R"))
-  ## Change line in download_ala_bytaxa.R
-  x <- readLines("./scripts/download_ala_bytaxa.R")
-  x[179] <- "        print(paste0('Searching the ALA for records of ', spp))"
-  cat(x, file="./scripts/download_ala_bytaxa.R", sep="\n")
+## Change line in download_ala_bytaxa.R
+x <- readLines("./scripts/download_ala_bytaxa.R")
+x[179] <- "        print(paste0('Searching the ALA for records of ', spp))"
+cat(x, file="./scripts/download_ala_bytaxa.R", sep="\n")
 system(paste0("curl https://raw.githubusercontent.com/cwarecsiro/gdmEngine/master/gdmEngine/R/merge_downloads.R -o ", "./scripts/merge_ala_downloads.R"))
 system(paste0("curl https://raw.githubusercontent.com/cwarecsiro/gdmEngine/master/gdmEngine/R/filter_ALA_data.R -o ", "./scripts/filter_ala_data.R"))
 
@@ -40,9 +41,9 @@ if(!(dim(data_sp)[1] == length(unique(data_sp$Species.Name)))){
   data_sp <- data_sp[!duplicated(data_sp$Species.Name),]
 }
 
-## Subset data_sp for trial
+## [Optional] Subset data_sp
 sort(unique(data_sp$Class))
-data_sp <- data_sp[data_sp$Class == "REPTILIA",]
+data_sp <- data_sp[data_sp$Class == "AVES",]
 
 ## Check that all names are unique
 dim(data_sp)[1] == length(unique(data_sp$Species.Name))
@@ -55,6 +56,7 @@ source("./scripts/download_ala.R")
 source("./scripts/download_ala_bytaxa.R")
 
 splist <- unique(data_sp$Species.Name)
+
 download_taxalist(specieslist = splist, #trial: splist[111:112], 
                   dst = ala_path, 
                   parallel = FALSE, 
@@ -67,17 +69,18 @@ library(data.table)
 library(dplyr)
 source("./scripts/merge_ala_downloads.R")
 ala.data <- merge_downloads(src = file.path(ala_path, "raw_files/"), output.folder = ala_path,
-                output.name = paste0("merged_data_", Sys.Date()),
-                keep_unzip = FALSE,
-                parallel = FALSE, 
-                verbose = TRUE)
+                            output.name = paste0("merged_data_", Sys.Date()),
+                            keep_unzip = FALSE,
+                            parallel = FALSE, 
+                            verbose = TRUE)
 
 ## Filter merged data
 library(sp)
 library(raster)
-aus.mask <- readRDS(file.path(data_path,"mask_aus.rds"))
-ala.data <- read.csv(file.path(data_path, "merged_data_2020-04-01.csv"))
 source("./scripts/filter_ala_data.R")
+ala.data <- read.csv(file.path(data_path, "merged_data_2020-04-01.csv"))
+aus.mask <- readRDS(file.path(data_path,"mask_aus.rds")) # after covariate data prep
+
 filtered.data <- filter_ALA_data(ALA.download.data = ala.data$data,             
                                  output.folder = ala_path,       
                                  output.name = "filtered_data_",  

@@ -11,8 +11,8 @@
 ##  5  bioq wihtout NA values - raster stack [18 files: vn, aus for 0.25, 
 ##      0.5 and 0.75 quartiles under rcp 45, 60, 85]
 ##  6. bioregions - raster layer [1 file: aus]
-## 
-## TOTAL FILES CREATED IN OUTPUT FOLDER (RData): xxx
+
+
 
 ## Master log file
 job_start <- Sys.time()
@@ -373,9 +373,6 @@ gc()
 # rm(list=setdiff(ls(), c("rdata_path", "gsdms_data", "ausppm_data")))
 # gc()
 
-
-## Save raster stacks as data.table ####
-...
 
 
 ## 3. Bioregions layer (for Australia only) ####

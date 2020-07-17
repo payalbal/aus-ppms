@@ -38,7 +38,7 @@ align.maskNA <- function(raster_stack, region_mask) {
   
   for (i in names(raster_stack)){
     if (!sum(is.na(region_mask@data@values)) == sum(is.na(raster_stack[[i]]@data@values))) {
-      nona <- which(!is.na(values(region_mask))) # non-na values in mas
+      nona <- which(!is.na(values(region_mask))) # non-na values in mask
       nas <- which(is.na(values(raster_stack[[i]])[nona])) # na values in covariate
       xys <- xyFromCell(region_mask, nona)
       xys <- xys[nas,]
