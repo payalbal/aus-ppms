@@ -7,7 +7,7 @@ system("ps")
 system("pkill -f R")
 
 setwd("./aus-ppms/")
-data_path <- "./data" #"/Volumes/discovery_data/aus-ppms_data/"
+data_path <- "./data" #"/Volumes/discovery_data/aus-ppms_data/" # "FOR SERVER: /tempdata/workdir/aus-ppms/data"
 ala_folder <- "AVES"
 ala_path <- file.path(data_path, "ala_data", ala_folder)
 
@@ -77,10 +77,9 @@ ala.data <- merge_downloads(src = file.path(ala_path, "raw_files/"), output.fold
 ## Filter merged data
 library(sp)
 library(raster)
+aus.mask <- readRDS(file.path(data_path,"RData", "mask_aus.rds"))
+ala.data <- read.csv(list.files(ala_path, pattern = c("merged.*\\.csv"), full.names = TRUE))
 source("./scripts/filter_ala_data.R")
-ala.data <- read.csv(file.path(data_path, "merged_data_2020-04-01.csv"))
-aus.mask <- readRDS(file.path(data_path,"mask_aus.rds")) # after covariate data prep
-
 filtered.data <- filter_ALA_data(ALA.download.data = ala.data$data,             
                                  output.folder = ala_path,       
                                  output.name = "filtered_data_",  

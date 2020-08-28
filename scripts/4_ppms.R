@@ -126,7 +126,7 @@ covs_mod <- stack(covs_mod, off.bias)
 covs_pred <- stack(covs_pred, off.bias)
 
 
-## Sync NA across all input rasters ####
+## Sync NA across all input rasters & save aligned_mask and covariate stacks ####
 ## Find min non-NA set values across mask and covariates and sync NAs
 ##  see 0_functions.R
 ## *** NOTE: mask is too slow; replace withjgarber's glda_calc.R function...
