@@ -18,6 +18,8 @@ dir.create("/tempdata/workdir/aus-ppms/output")
 output_path <- paste0("/tempdata/workdir/aus-ppms/output/output_", gsub("-", "", format(Sys.time(), "%F_%H%M")))
 datestamp <- gsub("-", "", format(Sys.time(), "%F")) ## used later to extract results
 dir.create(output_path)
+ala_folder <- "REPTILIA"
+ala_path <- file.path(ppm_path, "ala_data", ala_folder)
 
 
 ## Global parameters ####
@@ -38,28 +40,28 @@ cat(paste0("---------------------------------------------"), file = masterlog, a
 data_start <- Sys.time()
 cat(paste0("\n\nData prep start = ", data_start, "\n"), file = masterlog, append = TRUE)
 
-occdat <- readRDS(file.path(ppm_path, "ala_data/ala_data.rds"))
+occdat <- readRDS(file.path(ala_path, "ala_data.rds"))
 occdat <- occdat[,.(decimalLongitude, decimalLatitude, scientificName)]
 names(occdat) <- c("X", "Y", "species")
 
 
 ## Test for correlations in covariates ####
-covariates <- readRDS(file.path(rdata_path, "covariates_aus.rds"))
-all_covs <- names(covariates)
-covs_exclude <- c()
-# covs_exclude <- all_covs[grepl("di", all_covs)]
-# covs_bias <- c("dibu", "diro", "pa", "popd", "roughness")
-if(!is.null(covs_exclude)){
-  covariates <- covariates[[-which(names(covariates)%in%covs_exclude)]]
-}else{
-  covariates <- covariates
-}
-cov_df <- getValues(covariates)
-cov_df <- na.omit(cov_df)
-preds <- colnames(correlations(cov_df))
-saveRDS(preds, file = file.path(rdata_path, "preds_aus.rds"))
-rm(cov_df, covariates)
-# preds <- readRDS(file.path(rdata_path, "preds_aus.rds"))
+    # covariates <- readRDS(file.path(rdata_path, "covariates_aus.rds"))
+    # all_covs <- names(covariates)
+    # covs_exclude <- c()
+    # # covs_exclude <- all_covs[grepl("di", all_covs)]
+    # # covs_bias <- c("dibu", "diro", "pa", "popd", "roughness")
+    # if(!is.null(covs_exclude)){
+    #   covariates <- covariates[[-which(names(covariates)%in%covs_exclude)]]
+    # }else{
+    #   covariates <- covariates
+    # }
+    # cov_df <- getValues(covariates)
+    # cov_df <- na.omit(cov_df)
+    # preds <- colnames(correlations(cov_df))
+    # saveRDS(preds, file = file.path(rdata_path, "preds_aus.rds"))
+    # rm(cov_df, covariates)
+preds <- readRDS(file.path(rdata_path, "preds_aus.rds"))
 
 
 ## Load covariate data ####
@@ -72,30 +74,30 @@ quartiles <- "q2" #c("q2", "q1", "q3")
 scens <- sort(apply(expand.grid(quartiles, ssps), 1, paste0, collapse="_"))
 scens_rcps <- sort(apply(expand.grid(quartiles, rcps), 1, paste0, collapse="_"))
 
-type <- c("covariates", "predlu", "bio")
-dir.create(temp)
-for(k in 1:length(type)){
-  if(type[k]%in%type[c(2,3)]){
-    for(i in 1:length(scens)){
-      if(type[k] == "predlu"){
-        pattern <- paste0(type[k], "_", scens[i])
-      }
-      if(type[k] == "bio"){
-        pattern <- paste0(type[k], scens_rcps[i])
-      }
-      covs <- readRDS(list.files(rdata_path, pattern = pattern, full.names = T))
-      covs <- covs[[which(names(covs)%in%c(preds, "landuse"))]]
-      writeToDisk(covs, folder = file.path(temp, pattern))
-    }
-  }else{
-    covs <- readRDS(list.files(rdata_path,
-                               pattern = "covariates",
-                               full.names = T))
-    covs <- covs[[which(names(covs)%in%c(preds, "landuse"))]]
-    writeToDisk(covs, folder = file.path(temp, "models"))
-  }
-}
-rm(covs, type, pattern, i, k)
+    # type <- c("covariates", "predlu", "bio")
+    # dir.create(temp)
+    # for(k in 1:length(type)){
+    #   if(type[k]%in%type[c(2,3)]){
+    #     for(i in 1:length(scens)){
+    #       if(type[k] == "predlu"){
+    #         pattern <- paste0(type[k], "_", scens[i])
+    #       }
+    #       if(type[k] == "bio"){
+    #         pattern <- paste0(type[k], scens_rcps[i])
+    #       }
+    #       covs <- readRDS(list.files(rdata_path, pattern = pattern, full.names = T))
+    #       covs <- covs[[which(names(covs)%in%c(preds, "landuse"))]]
+    #       writeToDisk(covs, folder = file.path(temp, pattern))
+    #     }
+    #   }else{
+    #     covs <- readRDS(list.files(rdata_path,
+    #                                pattern = "covariates",
+    #                                full.names = T))
+    #     covs <- covs[[which(names(covs)%in%c(preds, "landuse"))]]
+    #     writeToDisk(covs, folder = file.path(temp, "models"))
+    #   }
+    # }
+    # rm(covs, type, pattern, i, k)
 
 ## Covariate stack for model building
 covariates_model <- stack(list.files(file.path(temp, "models"), full.names = T))
@@ -121,42 +123,43 @@ all(names(covs_pred) == names(covs_mod))
 rm(covariates_model, static_var, dynamic_var, landuse_var)
 
 ## Estimate samplig bias ####
-## Here, using all records from ALA. Other optiosn can be explored later
+## Here, using all records from ALA. Other option can be explored later
 ## Author: Skiptin Wooley
 ## Create empty raster
 reg_mask <- readRDS(file.path(rdata_path, "mask_aus.rds"))
-r <- reg_mask
-r[] <- 0
-
-## Count the number of records per cell
-tab <- table(cellFromXY(r, occdat[,1:2]))
-r[as.numeric(names(tab))] <- tab
-r <- mask(r,reg_mask)
-
-## Make zeros a very small number otherwise issues with log(0).
-r[r[]==0] <- 1e-6
-arear <- raster::area(r)
-
-## Calculate the probability that a cell has been sampled while accounting for area differences in lat/lon
-off.bias <- (-log(1-exp(-r*arear)) - log( arear))
-names(off.bias) <- "off.bias"
-
-## Add offset to covariate stacks for model and prediction
-covs_mod <- stack(covs_mod, off.bias)
-covs_pred <- stack(covs_pred, off.bias)
-
-
-## Sync NA across all input rasters & save aligned_mask and covariate stacks ####
-## Find min non-NA set values across mask and covariates and sync NAs
-##  see 0_functions.R
-## *** NOTE: mask is too slow; replace with jgarber's glda_calc.R function...
-reg_mask <- align.maskNA(covs_mod, reg_mask)
-reg_mask <- align.maskNA(covs_pred, reg_mask)
-covs_mod <- mask(covs_mod, reg_mask)
-covs_pred <- mask(covs_pred, reg_mask)
-saveRDS(reg_mask, file = file.path(rdata_path, "aligned_mask_aus.rds"))
-saveRDS(readAll(covs_mod), file = file.path(rdata_path, "covs_mod_aus.rds"))
-saveRDS(readAll(covs_pred), file = file.path(rdata_path, "covs_pred_aus.rds"))
+    # r <- reg_mask
+    # r[] <- 0
+    # 
+    # ## Count the number of records per cell
+    # tab <- table(cellFromXY(r, occdat[,1:2]))
+    # r[as.numeric(names(tab))] <- tab
+    # r <- mask(r,reg_mask)
+    # 
+    # ## Make zeros a very small number otherwise issues with log(0).
+    # r[r[]==0] <- 1e-6
+    # arear <- raster::area(r)
+    # 
+    # ## Calculate the probability that a cell has been sampled while accounting for area differences in lat/lon
+    # off.bias <- (-log(1-exp(-r*arear)) - log( arear))
+    # names(off.bias) <- "off.bias"
+    # 
+    # ## Add offset to covariate stacks for model and prediction
+    # covs_mod <- stack(covs_mod, off.bias)
+    # covs_pred <- stack(covs_pred, off.bias)
+    #  ## Also see this for ideas: https://journals.plos.org/plosone/article?id=10.1371/journal.pone.0079168
+    #
+    # 
+    # ## Sync NA across all input rasters & save aligned_mask and covariate stacks ####
+    # ## Find min non-NA set values across mask and covariates and sync NAs
+    # ##  see 0_functions.R
+    # ## *** NOTE: mask is too slow; replace with jgarber's glda_calc.R function...
+    # reg_mask <- align.maskNA(covs_mod, reg_mask)
+    # reg_mask <- align.maskNA(covs_pred, reg_mask)
+    # covs_mod <- mask(covs_mod, reg_mask)
+    # covs_pred <- mask(covs_pred, reg_mask)
+    # saveRDS(reg_mask, file = file.path(rdata_path, "aligned_mask_aus.rds"))
+    # saveRDS(readAll(covs_mod), file = file.path(rdata_path, "covs_mod_aus.rds"))
+    # saveRDS(readAll(covs_pred), file = file.path(rdata_path, "covs_pred_aus.rds"))
 
 covs_mod <- readRDS(file.path(rdata_path, "covs_mod_aus.rds"))
 covs_pred <- readRDS(file.path(rdata_path, "covs_pred_aus.rds"))
@@ -413,6 +416,7 @@ fit_ppms_apply <- function(i, spdat, bkdat, interaction_terms,
     ##  which covariates are included in the model as they are selected 
     ##  based on their order in the dataframe; pa being added last.
     ## *** ISSUE: factor(pa) only included when sufficient obs to fit all variables...
+    ## factor(pa) will need to be changes when use use distance layers
     
     if(nk <= min.obs){
       ppmform <- formula(paste0(" ~ poly(", paste0(interaction_terms, collapse = ", "),
@@ -668,11 +672,13 @@ cat(paste0(">> Model prep runtime = ", model_prep_runtime, " ",
 ppm_start <- Sys.time()
 cat(paste0("\n\nModel runs start = ", ppm_start, "\n"), file = masterlog, append = TRUE)
 
+trialN <- 10
+
 spdat <- as.data.frame(occdat)
 bkdat <- backxyzK
 modeval <- TRUE
-spp <- unique(spdat$species)[1:10]
-mc.cores <- 10
+spp <- unique(spdat$species)[1:trialN]
+mc.cores <- trialN
 seq_along(spp)
 ppm_models <- list()
 
@@ -684,7 +690,6 @@ ppm_models <- future_lapply(1:length(spp), fit_ppms_apply, spdat,
                             mask_path = file.path(rdata_path, "aligned_mask_aus.rds"),
                             n.fits = n.fits, min.obs = 60,
                             modeval = modeval, output_list = FALSE)
-names(ppm_models) <- tolower(gsub(" ", "_", spp))
 # ppm_models <- parallel::mclapply(1:length(spp), fit_ppms_apply, spdat,
 #                                  bkdat, interaction_terms, ppm_terms,
 #                                  species_names = spp,
@@ -696,15 +701,16 @@ names(ppm_models) <- tolower(gsub(" ", "_", spp))
 #                      bkdat, interaction_terms, ppm_terms,
 #                      species_names = spp,
 #                      mask_path = file.path(rdata_path, "aligned_mask_aus.rds"),
-#                      n.fits=10, min.obs = 60, modeval = TRUE)
+#                      n.fits=10, min.obs = 60, modeval = TRUE, output_list = TRUE)
+# names(ppm_models) <- tolower(gsub(" ", "_", spp))
+# saveRDS(ppm_models, paste0(output_path, "/ppm_out_", gsub("-", "", Sys.Date()), ".rds"))
 
 # ppm_models <- fit_ppms_apply(1, spdat, bkdat, interaction_terms,
 #                              ppm_terms, species_names = spp,
 #                              mask_path = file.path(rdata_path, "aligned_mask_aus.rds"),
-#                              n.fits=5, min.obs = 60, modeval = TRUE)
-
-
-saveRDS(ppm_models, paste0(output_path, "/ppm_out_", gsub("-", "", Sys.Date()), ".rds"))
+#                              n.fits=5, min.obs = 60, modeval = TRUE, output_list = TRUE)
+# names(ppm_models) <- tolower(gsub(" ", "_", spp))
+# saveRDS(ppm_models, paste0(output_path, "/ppm_out_", gsub("-", "", Sys.Date()), ".rds"))
 
 ppm_runtime <- Sys.time()-ppm_start
 cat(paste0("\n\nfit_ppms_apply() run time for ", length(spp), " species: ", 
@@ -733,16 +739,9 @@ cat("\n\nSession Info:\n", file = masterlog, append = TRUE)
 sink(file = masterlog, append = TRUE)
 sessionInfo()
 sink(NULL)
-
-
-## Extract mean likelihood
-meanlik <- sapply(ppm_models, `[[`, 1)
-as.data.frame(colMeans(meanlik))
-
 gc()
 
-
-## Load ppm_models from rds files ####
+## Load ppm_models from rds files (when output_list = FALSE) ####
 ## Species ppm files
 ppm_files <- list.files(output_path, pattern = "ppm_out", full.names = TRUE)
 
@@ -761,8 +760,7 @@ names(ppm_out) <- ppm_sp
 names(ppm_out[[1]])
 ppm_test_auc <- sapply(ppm_out, `[[`, 5)
 
-
-## Check for species distributions
+## Check species distributions
 reg_mask <- readRDS(file.path(rdata_path, "aligned_mask_aus.rds"))
 par(mfrow = c(2,5))
 for (i in 1:length(spp)){
@@ -775,10 +773,10 @@ for (i in 1:length(spp)){
   points(spxy)
 }
 
-## Check for NULL models
-length(ppm_models[!sapply(ppm_models,is.null)])
-length(ppm_models[sapply(ppm_models,is.null)])
-which(sapply(ppm_models,is.null))
+## Check for NULL models - WHERE ARE MY NULL MODELS!! (not being stored in output - why?)
+length(ppm_out[!sapply(ppm_out,is.null)])
+length(ppm_out[sapply(ppm_out,is.null)])
+which(sapply(ppm_out,is.null))
 
 
 ## IV. Catch errors in models & save outputs ####
@@ -845,7 +843,7 @@ predict_ppms_apply <- function(i, models_list, newdata, bkdat, RCPs = c(26, 85))
   }
 }
 
-# ## Bioregions layer _ TO USE FOR CLIPPING...
+# ## Bioregions layer - TO USE FOR CLIPPING...
 # bioreg <- readRDS(file.path(rdata_path, "bioregions_aus.rds")) 
 
 newdata <- predxyz
@@ -987,7 +985,7 @@ if(nk <= 5){ ## because linear and quad for X ad Y gives 5 terms
 } else  {
   ## if number of observations, (i.e. > 25), fit independent with linear and quadratic terms startign with landuse
   extra_covar <- ceiling((nk - 5)/2) ## fit additional covariates based on 
-  if(extra_covar > 10) extra_covar <- 10 ## if nrow(spxy) > 630 and nk > 25, only then all parameters are used!! ,...fix
+  if(extra_covar > 10) extra_covar <- 10 ## if nrow(spxy) > 630 and nk > 25, only then all parameters are used!! ...fix
   ppmform <- formula(paste0(paste0(" ~ poly(", paste0(interaction_terms, collapse = ", "),
                                    ", degree = 2, raw = FALSE)"), 
                             paste0(" + poly(", ppm_terms[1:extra_covar],

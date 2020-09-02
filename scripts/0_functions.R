@@ -227,4 +227,3 @@ area_corrted_richnes <- function (inputstack){
 }
 ## NOTES Area-corrected richness is the ratio of value in a pixel vs the sum of values across the area for a species. It gives a relative value that can be compared across species (unlike the relative likelihoods). So we can sum this for species. This is still an index of area corrected richness and not a measure of the richness directly. 
 
-
