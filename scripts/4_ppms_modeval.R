@@ -12,7 +12,9 @@ lapply(x, require, character.only = TRUE)
 source("/tempdata/workdir/aus-ppms/scripts/0_functions.R")
 
 ## *** NOTE: all files within to be recreated after BB's landuse maps (currently using regSSP_birds files)
-ppm_path <- "/tempdata/workdir/aus-ppms/data" # "/Volumes/discovery_data/aus-ppms_data"
+
+## Server paths
+ppm_path <- "/tempdata/workdir/aus-ppms/data" ## Local: ".../aus-ppms_data"
 rdata_path <- file.path(ppm_path, "RData")
 dir.create("/tempdata/workdir/aus-ppms/output")
 output_path <- paste0("/tempdata/workdir/aus-ppms/output/output_", gsub("-", "", format(Sys.time(), "%F_%H%M")))
