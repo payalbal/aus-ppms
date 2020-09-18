@@ -28,8 +28,8 @@ rm(list = ls())
 gc()
 # devtools::install_github('kapitzas/WorldClimTiles')
 # devtools::install_github('skiptoniam/sense')
-x <- c('data.table','rgdal','rgeos','matrixStats',"sp",'raster',
-       'WorldClimTiles','sense' , 'readxl')
+x <- c("data.table", "rgdal","rgeos", "matrixStats", "sp", "raster",
+       "WorldClimTiles", "sense", "readxl")
 lapply(x, require, character.only = TRUE)
 source(file.path(".", "scripts", "0_functions.R"))
 gsdms_data <- "../regSSP_data" #"/Volumes/discovery_data/gsdms_data"
